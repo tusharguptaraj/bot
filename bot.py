@@ -11,24 +11,40 @@ from telegram.ext import (
 )
 
 # ==========================================
-#   SHEIN Voucher Bot v4.0
-#   - Cookie Validation
-#   - Better Error Messages
+#   SHEIN Voucher Bot v4.1
+#   Easy Configuration Edition
 #   Dev: @SheinAalu x @sheingiveawayghost
 # ==========================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8207313391:AAHv5RxuIj4RF5xoYw8kxPVtqfpCi5Urwhg")
-CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL", "480"))
-DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
+# ⚙️ ========== EASY CONFIGURATION ========== ⚙️
+# Change these values according to your needs:
 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8207313391:AAHv5RxuIj4RF5xoYw8kxPVtqfpCi5Urwhg")
+
+# 🕒 TIMING SETTINGS
+CHECKER_DELAY_SECONDS = 2        # Delay between each voucher check (1-3 recommended)
+PROTECTOR_INTERVAL_MINUTES = 8   # How often protector checks (5-15 recommended)
+PROGRESS_UPDATE_EVERY = 3        # Update progress after N vouchers (1-10)
+REQUEST_TIMEOUT_SECONDS = 60     # API request timeout (30-90)
+
+# 🐛 DEBUG SETTINGS
+DEBUG_MODE = True                # Show detailed logs (True/False)
+SEND_DEBUG_FILE = True           # Send debug log file with results (True/False)
+
+# 💰 VOUCHER VALUES (Edit if new vouchers added)
 VOUCHER_VALUES = {
     "SVH": 4000,
     "SV3": 5000,
     "SVC": 1000,
     "SVD": 2000,
-    "SVI": 500,
+    "SVA": 500,
     "SVG": 500
 }
+
+# ⚙️ ========== END OF CONFIGURATION ========== ⚙️
+
+# Convert to seconds for internal use
+CHECK_INTERVAL_SECONDS = PROTECTOR_INTERVAL_MINUTES * 60
 
 user_sessions = {}
 
@@ -70,14 +86,10 @@ def get_headers(cookie_string):
     }
 
 def validate_cookies(cookie_string):
-    """
-    Validate if cookies are working by making a test API call
-    Returns: (is_valid, message)
-    """
+    """Validate if cookies are working"""
     if not cookie_string or len(cookie_string) < 100:
         return False, "Cookies too short (incomplete)"
     
-    # Test with a dummy voucher
     test_code = "TESTCODE123"
     headers = get_headers(cookie_string)
     url = "https://www.sheinindia.in/api/cart/apply-voucher"
@@ -89,33 +101,25 @@ def validate_cookies(cookie_string):
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = requests.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
         
-        # If we get 401, cookies are invalid
         if response.status_code == 401:
             return False, "Authentication failed (401 - Access denied)"
         
-        # If we get 200 or other status, cookies are working
-        # (Even if voucher is invalid, we got past authentication)
         if response.status_code in [200, 400, 422]:
             try:
                 data = response.json()
-                # Check for UnauthorizedError
                 if "errorMessage" in data:
                     errors = data.get("errorMessage", {}).get("errors", [])
                     for error in errors:
                         if error.get("type") == "UnauthorizedError":
                             return False, "Unauthorized - Login required or session expired"
-                
-                # If no auth error, cookies are valid
                 return True, "Cookies validated successfully!"
             except:
                 pass
-            
             return True, "Cookies working (got API response)"
         
         return False, f"Unexpected status code: {response.status_code}"
-        
     except Exception as e:
         return False, f"Connection error: {str(e)}"
 
@@ -134,13 +138,14 @@ def check_voucher(voucher_code, headers):
     
     try:
         log_debug(f"Checking voucher: {voucher_code}")
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response = requests.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
         
         log_debug(f"Response status for {voucher_code}: {response.status_code}")
         
         try:
             json_data = response.json()
-            log_debug(f"Response data for {voucher_code}: {json.dumps(json_data, indent=2)}")
+            if DEBUG_MODE:
+                log_debug(f"Response data for {voucher_code}: {json.dumps(json_data, indent=2)}")
         except json.JSONDecodeError:
             log_debug(f"JSON decode error for {voucher_code}")
             return response.status_code, None, response.text
@@ -159,7 +164,7 @@ def reset_voucher(voucher_code, headers):
         }
     }
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = requests.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
         log_debug(f"Reset voucher {voucher_code}: {response.status_code}")
     except Exception as e:
         log_debug(f"Reset error for {voucher_code}: {str(e)}")
@@ -171,7 +176,7 @@ def is_voucher_applicable(status_code, response_data):
     if response_data is None:
         return False, "No response data"
     
-    # Check for authentication errors first
+    # Check for authentication errors
     if "errorMessage" in response_data:
         errors = response_data.get("errorMessage", {}).get("errors", [])
         for error in errors:
@@ -215,7 +220,7 @@ def is_voucher_applicable(status_code, response_data):
                         log_debug(f"❌ Invalid - Pattern '{pattern}' found")
                         return False, f"Error: {error_msg}"
                 
-                # Minimum cart value = voucher exists but cart issue
+                # Minimum cart value = voucher exists
                 if "minimum" in error_msg or "cart" in error_msg:
                     return True, f"Valid but: {error_msg}"
         
@@ -269,7 +274,7 @@ def get_main_keyboard():
         [InlineKeyboardButton("🔍 Voucher Checker", callback_data="menu_checker")],
         [InlineKeyboardButton("🛡️ Voucher Protector", callback_data="menu_protector")],
         [InlineKeyboardButton("🍪 Set Cookies", callback_data="menu_cookies")],
-        [InlineKeyboardButton("📖 Cookie Guide", callback_data="menu_cookie_guide")],
+        [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
         [InlineKeyboardButton("ℹ️ Help", callback_data="menu_help")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -289,17 +294,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     welcome_text = (
         "🛍️ **SHEIN Voucher Checker & Protector Bot**\n"
-        "**Version 4.0** - Cookie Validation Edition\n\n"
+        "**Version 4.1** - Easy Configuration\n\n"
         f"👋 Welcome, {username}!\n\n"
-        "**Features:**\n"
-        "• 🔍 Check voucher validity\n"
-        "• 🛡️ 24/7 voucher protection\n"
-        "• 💾 Auto-save results\n"
-        "• 🍪 Cookie validation\n"
-        "• 🐛 Debug mode\n\n"
-        "**⚠️ IMPORTANT:**\n"
-        "Most issues are caused by invalid cookies!\n"
-        "Read the Cookie Guide for proper setup.\n\n"
+        "**Current Settings:**\n"
+        f"⏱️ Checker delay: {CHECKER_DELAY_SECONDS}s\n"
+        f"🛡️ Protector interval: {PROTECTOR_INTERVAL_MINUTES} min\n"
+        f"🐛 Debug mode: {'ON' if DEBUG_MODE else 'OFF'}\n\n"
         "🔥 **Credits:** @SheinAalu x @sheingiveawayghost\n\n"
         "Choose an option below:"
     )
@@ -328,21 +328,41 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_keyboard()
         )
     
+    elif query.data == "menu_settings":
+        text = (
+            "⚙️ **Current Settings**\n\n"
+            f"**Timing:**\n"
+            f"⏱️ Checker delay: {CHECKER_DELAY_SECONDS} seconds\n"
+            f"🛡️ Protector interval: {PROTECTOR_INTERVAL_MINUTES} minutes\n"
+            f"📊 Progress updates: Every {PROGRESS_UPDATE_EVERY} vouchers\n"
+            f"⏰ Request timeout: {REQUEST_TIMEOUT_SECONDS} seconds\n\n"
+            f"**Debug:**\n"
+            f"🐛 Debug mode: {'ON ✅' if DEBUG_MODE else 'OFF ❌'}\n"
+            f"📄 Debug file: {'Enabled ✅' if SEND_DEBUG_FILE else 'Disabled ❌'}\n\n"
+            f"**To change settings:**\n"
+            f"Edit the configuration at the top of bot file.\n\n"
+            f"**Recommended Settings:**\n"
+            f"• Fast: 1s delay, 5 min interval\n"
+            f"• Balanced: 2s delay, 8 min interval ⭐\n"
+            f"• Safe: 3s delay, 15 min interval"
+        )
+        await query.edit_message_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=get_back_keyboard()
+        )
+    
     elif query.data == "menu_cookies":
         text = (
             "🍪 **Cookie Setup**\n\n"
-            "**⚠️ IMPORTANT:** Wrong cookies = \"Access denied\" error!\n\n"
-            "**Quick Steps:**\n"
-            "1. Open sheinindia.in\n"
-            "2. Login to account\n"
-            "3. Add items to cart\n"
-            "4. Press F12 → Network tab\n"
-            "5. Try applying any voucher\n"
-            "6. Find \"apply-voucher\" request\n"
-            "7. Copy entire Cookie header\n"
-            "8. Send to bot\n\n"
-            "**Cookie length should be 500+ characters!**\n\n"
-            "📖 Need detailed guide? Click 'Cookie Guide' button.\n\n"
+            "**Steps:**\n"
+            "1. Login to sheinindia.in\n"
+            "2. Add items to cart\n"
+            "3. Press F12 → Network tab\n"
+            "4. Apply any voucher\n"
+            "5. Find 'apply-voucher' request\n"
+            "6. Copy Cookie header (500+ chars)\n"
+            "7. Send to bot\n\n"
             "Send me your cookies now:"
         )
         session.waiting_for = 'cookies'
@@ -352,71 +372,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_back_keyboard()
         )
     
-    elif query.data == "menu_cookie_guide":
-        text = (
-            "📖 **Complete Cookie Guide**\n\n"
-            "**Method 1: Network Tab (Best)**\n"
-            "1. Open sheinindia.in (incognito)\n"
-            "2. Login + add items to cart\n"
-            "3. F12 → Network tab\n"
-            "4. Try applying voucher on site\n"
-            "5. Click \"apply-voucher\" in Network\n"
-            "6. Headers → Request Headers\n"
-            "7. Copy entire \"cookie:\" value\n\n"
-            "**Method 2: Browser Console**\n"
-            "1. F12 → Console\n"
-            "2. Type: `copy(document.cookie)`\n"
-            "3. Press Enter\n"
-            "4. Paste in bot\n\n"
-            "**Method 3: Extension**\n"
-            "Use: EditThisCookie or Cookie-Editor\n\n"
-            "**Common Errors:**\n"
-            "❌ 401 Error = Invalid/expired cookies\n"
-            "❌ Access denied = Not logged in\n"
-            "❌ Too short = Incomplete cookies\n\n"
-            "📄 Full guide: See COOKIE_GUIDE.md file\n\n"
-            "**Critical:**\n"
-            "- Must be logged in\n"
-            "- Cart must have items\n"
-            "- Use fresh cookies (<30 min)\n"
-            "- Copy complete string (500+ chars)"
-        )
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=get_back_keyboard()
-        )
-    
     elif query.data == "menu_checker":
         if not session.cookie_string:
-            text = (
-                "❌ **Cookies Not Set!**\n\n"
-                "You need to set cookies first.\n\n"
-                "**Why?** Cookies authenticate you with SHEIN API.\n"
-                "Without them, you'll get \"Access denied\" error."
-            )
+            text = "❌ **Set cookies first!**"
             keyboard = [
                 [InlineKeyboardButton("🍪 Set Cookies", callback_data="menu_cookies")],
-                [InlineKeyboardButton("📖 Cookie Guide", callback_data="menu_cookie_guide")],
-                [InlineKeyboardButton("« Back", callback_data="menu_main")]
-            ]
-            await query.edit_message_text(
-                text,
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
-        
-        if not session.cookie_validated:
-            text = (
-                "⚠️ **Cookies Not Validated!**\n\n"
-                "Your cookies haven't been tested yet.\n"
-                "They might not work.\n\n"
-                "Set fresh cookies for best results."
-            )
-            keyboard = [
-                [InlineKeyboardButton("Continue Anyway", callback_data="checker_continue")],
-                [InlineKeyboardButton("🍪 Reset Cookies", callback_data="menu_cookies")],
                 [InlineKeyboardButton("« Back", callback_data="menu_main")]
             ]
             await query.edit_message_text(
@@ -428,23 +388,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         text = (
             "🔍 **Voucher Checker**\n\n"
-            "✅ Cookies validated!\n\n"
-            "Send voucher codes (one per line) or upload .txt file:\n\n"
-            "**Example:**\n"
-            "```\nSVH1234\nSV31234\nSVC1234```"
-        )
-        session.waiting_for = 'vouchers_check'
-        await query.edit_message_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=get_back_keyboard()
-        )
-    
-    elif query.data == "checker_continue":
-        text = (
-            "🔍 **Voucher Checker**\n\n"
-            "⚠️ Using unvalidated cookies - results may be incorrect!\n\n"
-            "Send voucher codes:"
+            f"⚙️ Settings: {CHECKER_DELAY_SECONDS}s delay between checks\n\n"
+            "Send voucher codes (one per line) or .txt file:"
         )
         session.waiting_for = 'vouchers_check'
         await query.edit_message_text(
@@ -475,7 +420,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (
                 f"🛡️ **Protection Active!**\n\n"
                 f"✅ Protecting {len(session.vouchers)} vouchers\n"
-                f"🕒 Interval: {CHECK_INTERVAL_SECONDS//60} minutes"
+                f"🕒 Interval: {PROTECTOR_INTERVAL_MINUTES} minutes"
             )
             await query.edit_message_text(
                 text,
@@ -485,7 +430,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = (
                 "🛡️ **Voucher Protector**\n\n"
-                f"Monitor vouchers every {CHECK_INTERVAL_SECONDS//60} minutes.\n\n"
+                f"⚙️ Settings: Check every {PROTECTOR_INTERVAL_MINUTES} minutes\n\n"
                 "Send voucher codes:"
             )
             session.waiting_for = 'vouchers_protect'
@@ -497,32 +442,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif query.data == "stop_protection":
         if session.protection_active and session.protection_task:
-            await query.edit_message_text(
-                "⏸️ Stopping protection...",
-                parse_mode='Markdown'
-            )
+            await query.edit_message_text("⏸️ Stopping protection...")
             session.protection_task.cancel()
         else:
-            await query.answer("Protection not active!", show_alert=True)
+            await query.answer("Not active!", show_alert=True)
     
     elif query.data == "menu_help":
         text = (
             "ℹ️ **Help**\n\n"
-            "**Common Errors:**\n\n"
-            "**1. 401 / Access Denied**\n"
-            "→ Invalid cookies\n"
-            "→ Not logged in\n"
-            "→ Cookies expired\n"
-            "Fix: Get fresh cookies (see Cookie Guide)\n\n"
-            "**2. Valid codes show invalid**\n"
-            "→ Cookies from guest session\n"
-            "→ Empty cart\n"
-            "→ Incomplete cookies\n"
-            "Fix: Login, add cart items, get cookies\n\n"
-            "**3. All codes invalid**\n"
-            "→ Cookie validation failed\n"
-            "Fix: Use Network tab method (Cookie Guide)\n\n"
-            "**Need More Help?**\n"
+            "**How to change timing:**\n"
+            "1. Open bot file in editor\n"
+            "2. Find EASY CONFIGURATION section at top\n"
+            "3. Change the values:\n"
+            "   - CHECKER_DELAY_SECONDS (1-3)\n"
+            "   - PROTECTOR_INTERVAL_MINUTES (5-15)\n"
+            "4. Save and restart bot\n\n"
+            "**Current settings:**\n"
+            f"Checker: {CHECKER_DELAY_SECONDS}s\n"
+            f"Protector: {PROTECTOR_INTERVAL_MINUTES}min\n\n"
             "Contact: @SheinAalu | @sheingiveawayghost"
         )
         await query.edit_message_text(
@@ -542,10 +479,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # File upload
     if update.message.document:
         if not update.message.document.file_name.endswith('.txt'):
-            await update.message.reply_text(
-                "❌ Only .txt files allowed!",
-                parse_mode='Markdown'
-            )
+            await update.message.reply_text("❌ Only .txt files!")
             return
         
         file = await context.bot.get_file(update.message.document.file_id)
@@ -564,25 +498,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if session.waiting_for == 'cookies':
         cookie_string = parse_cookies(text)
         
-        if not cookie_string or len(cookie_string) < 100:
+        if len(cookie_string) < 100:
             await update.message.reply_text(
-                "❌ **Cookies too short!**\n\n"
-                f"Length: {len(cookie_string)} characters\n"
-                "Required: 500+ characters\n\n"
-                "This means cookies are incomplete.\n"
-                "Please copy the COMPLETE cookie string.\n\n"
-                "See Cookie Guide for proper method.",
-                parse_mode='Markdown',
-                reply_markup=get_main_keyboard()
+                f"❌ **Cookies too short!**\n\n"
+                f"Length: {len(cookie_string)} chars\n"
+                f"Required: 500+ chars\n\n"
+                f"Copy complete cookie string!",
+                parse_mode='Markdown'
             )
             return
         
-        # Validate cookies
-        validation_msg = await update.message.reply_text(
-            "🔄 **Validating cookies...**\n\nPlease wait...",
-            parse_mode='Markdown'
-        )
-        
+        # Validate
+        validation_msg = await update.message.reply_text("🔄 Validating...")
         is_valid, message = validate_cookies(cookie_string)
         
         if is_valid:
@@ -591,40 +518,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session.waiting_for = None
             
             await validation_msg.edit_text(
-                "✅ **Cookies Validated Successfully!**\n\n"
-                f"Length: {len(cookie_string)} characters\n"
-                f"Status: {message}\n\n"
-                "You can now use Checker and Protector!",
+                f"✅ **Cookies Validated!**\n\n"
+                f"Length: {len(cookie_string)} chars\n"
+                f"Status: {message}",
                 parse_mode='Markdown'
             )
-            
-            await update.message.reply_text(
-                "Choose an option:",
-                reply_markup=get_main_keyboard()
-            )
+            await update.message.reply_text("Choose option:", reply_markup=get_main_keyboard())
         else:
             await validation_msg.edit_text(
-                f"❌ **Cookie Validation Failed!**\n\n"
+                f"❌ **Validation Failed!**\n\n"
                 f"Error: {message}\n\n"
-                f"**Common causes:**\n"
-                f"• Not logged in to SHEIN\n"
-                f"• Session expired\n"
-                f"• Cookies from wrong site\n"
-                f"• Incomplete cookie string\n\n"
-                f"**Solution:**\n"
-                f"1. Login to sheinindia.in\n"
-                f"2. Add items to cart\n"
-                f"3. Use Network tab method\n"
-                f"4. Copy complete cookies\n"
-                f"5. Try again immediately\n\n"
-                f"See Cookie Guide for detailed steps.",
+                f"Get fresh cookies using Network tab method.",
                 parse_mode='Markdown'
             )
-            
-            await update.message.reply_text(
-                "Try again or check Cookie Guide:",
-                reply_markup=get_main_keyboard()
-            )
+            await update.message.reply_text("Try again:", reply_markup=get_main_keyboard())
     
     elif session.waiting_for == 'vouchers_check':
         await process_voucher_check(update, session, text)
@@ -633,48 +540,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_voucher_protect(update, context, session, text)
     
     else:
-        await update.message.reply_text(
-            "Use /start to see menu",
-            reply_markup=get_main_keyboard()
-        )
+        await update.message.reply_text("Use /start", reply_markup=get_main_keyboard())
 
 async def process_voucher_check(update: Update, session: UserSession, text: str):
     vouchers = parse_vouchers(text)
     
     if not vouchers:
-        await update.message.reply_text(
-            "❌ No valid vouchers found!",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text("❌ No vouchers found!")
         return
     
     progress_msg = await update.message.reply_text(
         f"🔄 **Checking {len(vouchers)} vouchers...**\n\n"
-        "This may take a while...",
+        f"⚙️ Delay: {CHECKER_DELAY_SECONDS}s between checks\n"
+        f"⏱️ Est. time: ~{len(vouchers) * CHECKER_DELAY_SECONDS}s",
         parse_mode='Markdown'
     )
     
     headers = get_headers(session.cookie_string)
     valid_codes = []
     invalid_codes = []
-    auth_error_count = 0
+    details = []
     
     for i, code in enumerate(vouchers, 1):
         status, data, error = check_voucher(code, headers)
         is_valid, reason = is_voucher_applicable(status, data)
         
-        # Count auth errors
-        if "AUTH ERROR" in reason or "Authentication failed" in reason:
-            auth_error_count += 1
-        
         if is_valid:
             valid_codes.append(code)
+            details.append(f"{code}: VALID - {reason}")
         else:
             invalid_codes.append(code)
+            details.append(f"{code}: INVALID - {reason}")
         
         reset_voucher(code, headers)
         
-        if i % 3 == 0:
+        # Update progress based on PROGRESS_UPDATE_EVERY setting
+        if i % PROGRESS_UPDATE_EVERY == 0 or i == len(vouchers):
             try:
                 await progress_msg.edit_text(
                     f"🔄 **Checking...**\n\n"
@@ -686,12 +587,14 @@ async def process_voucher_check(update: Update, session: UserSession, text: str)
             except:
                 pass
         
-        await asyncio.sleep(2)
+        # Use configured delay
+        await asyncio.sleep(CHECKER_DELAY_SECONDS)
     
     # Save files
     user_id = session.user_id
     valid_file = f"vouchers_{user_id}.txt"
     invalid_file = f"invalid_{user_id}.txt"
+    debug_file = f"debug_{user_id}.txt"
     
     with open(valid_file, 'w') as f:
         f.write('\n'.join(valid_codes))
@@ -699,23 +602,18 @@ async def process_voucher_check(update: Update, session: UserSession, text: str)
     with open(invalid_file, 'w') as f:
         f.write('\n'.join(invalid_codes))
     
+    if SEND_DEBUG_FILE:
+        with open(debug_file, 'w') as f:
+            f.write('\n'.join(details))
+    
     # Summary
     summary = (
         f"**📊 Results:**\n\n"
         f"✅ Valid: {len(valid_codes)}\n"
         f"❌ Invalid: {len(invalid_codes)}\n"
-        f"📁 Total: {len(vouchers)}"
+        f"📁 Total: {len(vouchers)}\n"
+        f"⏱️ Time: ~{len(vouchers) * CHECKER_DELAY_SECONDS}s"
     )
-    
-    # Warning if auth errors
-    if auth_error_count > 0:
-        summary += (
-            f"\n\n⚠️ **WARNING:**\n"
-            f"{auth_error_count} auth errors detected!\n"
-            f"Your cookies may be expired.\n"
-            f"Results might be incorrect.\n\n"
-            f"Recommendation: Get fresh cookies!"
-        )
     
     await progress_msg.edit_text(summary, parse_mode='Markdown')
     
@@ -725,7 +623,7 @@ async def process_voucher_check(update: Update, session: UserSession, text: str)
             await update.message.reply_document(
                 document=f,
                 filename='vouchers.txt',
-                caption=f'✅ Valid ({len(valid_codes)} codes)'
+                caption=f'✅ Valid ({len(valid_codes)})'
             )
     
     if invalid_codes:
@@ -733,28 +631,35 @@ async def process_voucher_check(update: Update, session: UserSession, text: str)
             await update.message.reply_document(
                 document=f,
                 filename='invalid.txt',
-                caption=f'❌ Invalid ({len(invalid_codes)} codes)'
+                caption=f'❌ Invalid ({len(invalid_codes)})'
+            )
+    
+    if SEND_DEBUG_FILE and details:
+        with open(debug_file, 'rb') as f:
+            await update.message.reply_document(
+                document=f,
+                filename='debug.txt',
+                caption='🐛 Debug log'
             )
     
     # Cleanup
     try:
         os.remove(valid_file)
         os.remove(invalid_file)
+        if SEND_DEBUG_FILE:
+            os.remove(debug_file)
     except:
         pass
     
     session.waiting_for = None
-    await update.message.reply_text(
-        "✅ Check complete!",
-        reply_markup=get_main_keyboard()
-    )
+    await update.message.reply_text("✅ Complete!", reply_markup=get_main_keyboard())
 
 async def process_voucher_protect(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                                    session: UserSession, text: str):
     vouchers = parse_vouchers(text)
     
     if not vouchers:
-        await update.message.reply_text("❌ No vouchers found!")
+        await update.message.reply_text("❌ No vouchers!")
         return
     
     session.vouchers = vouchers
@@ -763,7 +668,8 @@ async def process_voucher_protect(update: Update, context: ContextTypes.DEFAULT_
     
     await update.message.reply_text(
         f"🛡️ **Protection Started!**\n\n"
-        f"Monitoring {len(vouchers)} vouchers...",
+        f"✅ Monitoring {len(vouchers)} vouchers\n"
+        f"🕒 Interval: {PROTECTOR_INTERVAL_MINUTES} minutes",
         parse_mode='Markdown'
     )
     
@@ -773,18 +679,70 @@ async def process_voucher_protect(update: Update, context: ContextTypes.DEFAULT_
 
 async def protection_loop(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                          session: UserSession):
-    # [Same as v3 but with auth error detection]
-    # Implementation similar to v3, skipping for brevity
-    pass
+    """Protection loop - same as v4 but uses configured interval"""
+    cycle = 1
+    chat_id = update.effective_chat.id
+    
+    while session.protection_active:
+        try:
+            headers = get_headers(session.cookie_string)
+            valid_codes = []
+            invalid_codes = []
+            
+            for code in session.vouchers:
+                status, data, error = check_voucher(code, headers)
+                is_valid, reason = is_voucher_applicable(status, data)
+                
+                if is_valid:
+                    valid_codes.append(code)
+                else:
+                    invalid_codes.append(code)
+                
+                reset_voucher(code, headers)
+                await asyncio.sleep(CHECKER_DELAY_SECONDS)
+            
+            session.last_valid_codes = valid_codes
+            session.last_invalid_codes = invalid_codes
+            
+            # Send update
+            now = datetime.datetime.now().strftime("%H:%M:%S")
+            next_time = (datetime.datetime.now() + datetime.timedelta(seconds=CHECK_INTERVAL_SECONDS)).strftime("%H:%M:%S")
+            
+            report = (
+                f"🔄 **Cycle #{cycle}**\n\n"
+                f"🕒 Time: {now}\n"
+                f"✅ Valid: {len(valid_codes)}\n"
+                f"❌ Invalid: {len(invalid_codes)}\n"
+                f"⏰ Next: {next_time}"
+            )
+            
+            await context.bot.send_message(chat_id=chat_id, text=report, parse_mode='Markdown')
+            
+            cycle += 1
+            await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+            
+        except asyncio.CancelledError:
+            # Send final files (same as v4)
+            break
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Error: {str(e)}\n\nRetrying...",
+                parse_mode='Markdown'
+            )
+            await asyncio.sleep(30)
 
 def main():
     if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("❌ Set BOT_TOKEN first!")
         return
     
-    print("🤖 SHEIN Bot v4.0 - Cookie Validation Edition")
+    print("🤖 SHEIN Bot v4.1 - Easy Configuration")
     print("=" * 50)
-    print("Features: Cookie validation, Better errors")
+    print(f"⏱️  Checker delay: {CHECKER_DELAY_SECONDS}s")
+    print(f"🛡️  Protector interval: {PROTECTOR_INTERVAL_MINUTES} min")
+    print(f"📊 Progress updates: Every {PROGRESS_UPDATE_EVERY} vouchers")
+    print(f"🐛 Debug: {'ON' if DEBUG_MODE else 'OFF'}")
     print("=" * 50)
     
     application = Application.builder().token(BOT_TOKEN).build()
